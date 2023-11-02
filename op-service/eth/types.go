@@ -315,5 +315,7 @@ type SystemConfig struct {
 	Scalar Bytes32 `json:"scalar"`
 	// GasLimit identifies the L2 block gas limit
 	GasLimit uint64 `json:"gasLimit"`
+	// UnsafeBlockSigner is the address of the key the sequencer uses to sign blocks on the P2P layer.
+	UnsafeBlockSigner common.Address `json:"unsafeBlockSigner"`
 	// More fields can be added for future SystemConfig versions.
 }

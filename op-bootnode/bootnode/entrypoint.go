@@ -34,6 +34,10 @@ func (g *gossipConfig) P2PSequencerAddress() common.Address {
 	return common.Address{}
 }
 
+func (g *gossipConfig) P2PSequencerAddressByL1BlockNumber(uint64) (common.Address, bool) {
+	return common.Address{}, false
+}
+
 type l2Chain struct{}
 
 func (l *l2Chain) PayloadByNumber(_ context.Context, _ uint64) (*eth.ExecutionPayload, error) {

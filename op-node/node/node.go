@@ -195,10 +195,10 @@ func (n *OpNode) initL1(ctx context.Context, cfg *Config) error {
 
 func (n *OpNode) initRuntimeConfig(ctx context.Context, cfg *Config) error {
 	// attempt to load runtime config, repeat N times
-	n.runCfg = NewRuntimeConfig(n.log, n.l1Source, &cfg.Rollup)
-
 	confDepth := cfg.Driver.VerifierConfDepth
-	reload := func(ctx context.Context) (eth.L1BlockRef, error) {
+	n.runCfg = NewRuntimeConfig(n.log, n.l1Source, &cfg.Rollup, confDepth, n.handleProtocolVersionsUpdate)
+
+	load := func(ctx context.Context) (eth.L1BlockRef, error) {
 		fetchCtx, fetchCancel := context.WithTimeout(ctx, time.Second*10)
 		l1Head, err := n.l1Source.L1BlockRefByLabel(fetchCtx, eth.Unsafe)
 		fetchCancel()
@@ -207,34 +207,16 @@ func (n *OpNode) initRuntimeConfig(ctx context.Context, cfg *Config) error {
 			return eth.L1BlockRef{}, err
 		}
 
-		// Apply confirmation-distance
-		blNum := l1Head.Number
-		if blNum >= confDepth {
-			blNum -= confDepth
-		}
 		fetchCtx, fetchCancel = context.WithTimeout(ctx, time.Second*10)
-		confirmed, err := n.l1Source.L1BlockRefByNumber(fetchCtx, blNum)
+		err = n.runCfg.Initialize(fetchCtx, l1Head)
 		fetchCancel()
-		if err != nil {
-			n.log.Error("failed to fetch confirmed L1 block for runtime config loading", "err", err, "number", blNum)
-			return eth.L1BlockRef{}, err
-		}
 
-		fetchCtx, fetchCancel = context.WithTimeout(ctx, time.Second*10)
-		err = n.runCfg.Load(fetchCtx, confirmed)
-		fetchCancel()
-		if err != nil {
-			n.log.Error("failed to fetch runtime config data", "err", err)
-			return l1Head, err
-		}
-
-		err = n.handleProtocolVersionsUpdate(ctx)
 		return l1Head, err
 	}
 
 	// initialize the runtime config before unblocking
 	if _, err := retry.Do(ctx, 5, retry.Fixed(time.Second*10), func() (eth.L1BlockRef, error) {
-		ref, err := reload(ctx)
+		ref, err := load(ctx)
 		if errors.Is(err, errNodeHalt) { // don't retry on halt error
 			err = nil
 		}
@@ -243,48 +225,52 @@ func (n *OpNode) initRuntimeConfig(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("failed to load runtime configuration repeatedly, last error: %w", err)
 	}
 
-	// start a background loop, to keep reloading it at the configured reload interval
-	reloader := func(ctx context.Context, reloadInterval time.Duration) {
-		if reloadInterval <= 0 {
-			n.log.Debug("not running runtime-config reloading background loop")
-			return
-		}
-		ticker := time.NewTicker(reloadInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				// If the reload fails, we will try again the next interval.
-				// Missing a runtime-config update is not critical, and we do not want to overwhelm the L1 RPC.
-				l1Head, err := reload(ctx)
-				if err != nil {
-					if errors.Is(err, errNodeHalt) {
-						n.halted.Store(true)
-						if n.cancel != nil { // node cancellation is always available when started as CLI app
-							n.cancel(errNodeHalt)
-							return
-						} else {
-							n.log.Debug("opted to halt, but cannot halt node", "l1_head", l1Head)
-						}
-					} else {
-						n.log.Warn("failed to reload runtime config", "err", err)
-					}
-				} else {
-					n.log.Debug("reloaded runtime config", "l1_head", l1Head)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}
-
-	n.runtimeConfigReloaderDone = make(chan struct{})
-	// Manages the lifetime of reloader. In order to safely Close the OpNode
-	go func(ctx context.Context, reloadInterval time.Duration) {
-		reloader(ctx, reloadInterval)
-		close(n.runtimeConfigReloaderDone)
-	}(n.resourcesCtx, cfg.RuntimeConfigReloadInterval) // this keeps running after initialization
 	return nil
+
+	// TODO: remove runtime runtimeConfigReloaderDone
+
+	// // start a background loop, to keep reloading it at the configured reload interval
+	// reloader := func(ctx context.Context, reloadInterval time.Duration) {
+	// 	if reloadInterval <= 0 {
+	// 		n.log.Debug("not running runtime-config reloading background loop")
+	// 		return
+	// 	}
+	// 	ticker := time.NewTicker(reloadInterval)
+	// 	defer ticker.Stop()
+	// 	for {
+	// 		select {
+	// 		case <-ticker.C:
+	// 			// If the reload fails, we will try again the next interval.
+	// 			// Missing a runtime-config update is not critical, and we do not want to overwhelm the L1 RPC.
+	// 			l1Head, err := reload(ctx)
+	// 			if err != nil {
+	// 				if errors.Is(err, errNodeHalt) {
+	// 					n.halted.Store(true)
+	// 					if n.cancel != nil { // node cancellation is always available when started as CLI app
+	// 						n.cancel(errNodeHalt)
+	// 						return
+	// 					} else {
+	// 						n.log.Debug("opted to halt, but cannot halt node", "l1_head", l1Head)
+	// 					}
+	// 				} else {
+	// 					n.log.Warn("failed to reload runtime config", "err", err)
+	// 				}
+	// 			} else {
+	// 				n.log.Debug("reloaded runtime config", "l1_head", l1Head)
+	// 			}
+	// 		case <-ctx.Done():
+	// 			return
+	// 		}
+	// 	}
+	// }
+
+	// n.runtimeConfigReloaderDone = make(chan struct{})
+	// // Manages the lifetime of reloader. In order to safely Close the OpNode
+	// go func(ctx context.Context, reloadInterval time.Duration) {
+	// 	reloader(ctx, reloadInterval)
+	// 	close(n.runtimeConfigReloaderDone)
+	// }(n.resourcesCtx, cfg.RuntimeConfigReloadInterval) // this keeps running after initialization
+	// return nil
 }
 
 func (n *OpNode) initL2(ctx context.Context, cfg *Config, snapshotLog log.Logger) error {
@@ -455,9 +441,19 @@ func (n *OpNode) OnNewL1Head(ctx context.Context, sig eth.L1BlockRef) {
 	}
 	// Pass on the event to the L2 Engine
 	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-	defer cancel()
 	if err := n.l2Driver.OnL1Head(ctx, sig); err != nil {
 		n.log.Warn("failed to notify engine driver of L1 head change", "err", err)
+	}
+	cancel()
+
+	// Pass on event to RuntimeConfig to load latest config from L1.
+	// Since We subscribe to L1 before initializing RuntimeConfig, only pass on event to RuntimeConfig
+	// after it is initialized
+	// RuntimeConfig applies verifier confirmation depth automatically.
+	if n.runCfg != nil && n.runCfg.initialized {
+		ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+		n.runCfg.OnNewL1Block(ctx, sig)
+		cancel()
 	}
 }
 

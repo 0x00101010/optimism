@@ -11,9 +11,7 @@ import (
 
 var errNodeHalt = errors.New("opted to halt, unprepared for protocol change")
 
-func (n *OpNode) handleProtocolVersionsUpdate(ctx context.Context) error {
-	recommended := n.runCfg.RecommendedProtocolVersion()
-	required := n.runCfg.RequiredProtocolVersion()
+func (n *OpNode) handleProtocolVersionsUpdate(ctx context.Context, required params.ProtocolVersion, recommended params.ProtocolVersion) error {
 	// if the protocol version sources are disabled we do not process them
 	if recommended == (params.ProtocolVersion{}) && required == (params.ProtocolVersion{}) {
 		return nil

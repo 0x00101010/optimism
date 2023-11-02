@@ -9,3 +9,7 @@ type MockRuntimeConfig struct {
 func (m *MockRuntimeConfig) P2PSequencerAddress() common.Address {
 	return m.P2PSeqAddress
 }
+
+func (m *MockRuntimeConfig) P2PSequencerAddressByL1BlockNumber(uint64) (common.Address, bool) {
+	return m.P2PSeqAddress, true
+}

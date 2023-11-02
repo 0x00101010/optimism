@@ -59,6 +59,7 @@ type GossipSetupConfigurables interface {
 
 type GossipRuntimeConfig interface {
 	P2PSequencerAddress() common.Address
+	P2PSequencerAddressByL1BlockNumber(num uint64) (common.Address, bool)
 }
 
 //go:generate mockery --name GossipMetricer

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
@@ -28,13 +29,19 @@ var (
 	RecommendedProtocolVersionStorageSlot = common.HexToHash("0xe314dfc40f0025322aacc0ba8ef420b62fb3b702cf01e0cdf3d829117ac2ff1a")
 )
 
+type ProtocolVersionUpdateListener func(ctx context.Context, required params.ProtocolVersion, recommended params.ProtocolVersion) error
+
 type RuntimeCfgL1Source interface {
 	ReadStorageAt(ctx context.Context, address common.Address, storageSlot common.Hash, blockHash common.Hash) (common.Hash, error)
+	L1BlockRefByNumber(ctx context.Context, num uint64) (eth.L1BlockRef, error)
 }
 
 type ReadonlyRuntimeConfig interface {
+	// Returns the latest P2P sequencer address in the config.
 	P2PSequencerAddress() common.Address
+	// Returns latest required protocol version.
 	RequiredProtocolVersion() params.ProtocolVersion
+	// Returns latest recommended protocol version.
 	RecommendedProtocolVersion() params.ProtocolVersion
 }
 
@@ -50,67 +57,99 @@ type RuntimeConfig struct {
 	l1Client  RuntimeCfgL1Source
 	rollupCfg *rollup.Config
 
-	// l1Ref is the current source of the data,
-	// if this is invalidated with a reorg the data will have to be reloaded.
-	l1Ref eth.L1BlockRef
-
-	runtimeConfigData
+	store             runtimeConfigStore
+	initialized       bool
+	verifierConfDepth uint64
+	pvuListener       ProtocolVersionUpdateListener
 }
 
-// runtimeConfigData is a flat bundle of configurable data, easy and light to copy around.
-type runtimeConfigData struct {
-	p2pBlockSignerAddr common.Address
-
-	// superchain protocol version signals
-	recommended params.ProtocolVersion
-	required    params.ProtocolVersion
-}
-
-var _ p2p.GossipRuntimeConfig = (*RuntimeConfig)(nil)
-
-func NewRuntimeConfig(log log.Logger, l1Client RuntimeCfgL1Source, rollupCfg *rollup.Config) *RuntimeConfig {
+func NewRuntimeConfig(
+	log log.Logger,
+	l1Client RuntimeCfgL1Source,
+	rollupCfg *rollup.Config,
+	verifierConfDepth uint64,
+	pvu ProtocolVersionUpdateListener,
+) *RuntimeConfig {
 	return &RuntimeConfig{
 		log:       log,
 		l1Client:  l1Client,
 		rollupCfg: rollupCfg,
+		// TODO: make it configurable
+		store:             NewRuntimeConfigStore(100),
+		initialized:       false,
+		verifierConfDepth: verifierConfDepth,
+		pvuListener:       pvu,
 	}
 }
 
+func (r *RuntimeConfig) Initialize(ctx context.Context, l1Ref eth.L1BlockRef) error {
+	if err := r.OnNewL1Block(ctx, l1Ref); err != nil {
+		return err
+	}
+	r.initialized = true
+	return nil
+}
+
+var _ p2p.GossipRuntimeConfig = (*RuntimeConfig)(nil)
+var _ ReadonlyRuntimeConfig = (*RuntimeConfig)(nil)
+
+// P2PSequencerAddress implements p2p.GossipRuntimeConfig.
 func (r *RuntimeConfig) P2PSequencerAddress() common.Address {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.p2pBlockSignerAddr
+	return r.store.Latest().sysCfg.UnsafeBlockSigner
 }
 
-func (r *RuntimeConfig) RequiredProtocolVersion() params.ProtocolVersion {
+// P2PSequencerAddressByL1BlockNumber implements p2p.GossipRuntimeConfig.
+func (r *RuntimeConfig) P2PSequencerAddressByL1BlockNumber(blkNum uint64) (common.Address, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.required
+	val, existed := r.store.Get(blkNum)
+	return val.sysCfg.UnsafeBlockSigner, existed
 }
 
+// RecommendedProtocolVersion implements ReadonlyRuntimeConfig.
 func (r *RuntimeConfig) RecommendedProtocolVersion() params.ProtocolVersion {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.recommended
+	return r.store.Latest().recommended
 }
 
-// Load resets the runtime configuration by fetching the latest config data from L1 at the given L1 block.
-// Load is safe to call concurrently, but will lock the runtime configuration modifications only,
-// and will thus not block other Load calls with possibly alternative L1 block views.
-func (r *RuntimeConfig) Load(ctx context.Context, l1Ref eth.L1BlockRef) error {
-	p2pSignerVal, err := r.l1Client.ReadStorageAt(ctx, r.rollupCfg.L1SystemConfigAddress, UnsafeBlockSignerAddressSystemConfigStorageSlot, l1Ref.Hash)
+// RequiredProtocolVersion implements ReadonlyRuntimeConfig.
+func (r *RuntimeConfig) RequiredProtocolVersion() params.ProtocolVersion {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.store.Latest().required
+}
+
+func (r *RuntimeConfig) OnNewL1Block(ctx context.Context, l1Ref eth.L1BlockRef) error {
+	// Apply confirmation depth
+	blkNum := l1Ref.Number
+	if blkNum >= r.verifierConfDepth {
+		blkNum -= r.verifierConfDepth
+	}
+
+	fetchCtx, fetchCancel := context.WithTimeout(ctx, time.Second*10)
+	confirmed, err := r.l1Client.L1BlockRefByNumber(fetchCtx, blkNum)
+	fetchCancel()
+	if err != nil {
+		r.log.Error("failed to fetch confirmed L1 block for runtime config loading", "err", err, "number", blkNum)
+		return err
+	}
+
+	unsafeBlockSigner, err := r.l1Client.ReadStorageAt(ctx, r.rollupCfg.L1SystemConfigAddress, UnsafeBlockSignerAddressSystemConfigStorageSlot, confirmed.Hash)
 	if err != nil {
 		return fmt.Errorf("failed to fetch unsafe block signing address from system config: %w", err)
 	}
 	// The superchain protocol version data is optional; only applicable to rollup configs that specify a ProtocolVersions address.
 	var requiredProtVersion, recommendedProtoVersion params.ProtocolVersion
 	if r.rollupCfg.ProtocolVersionsAddress != (common.Address{}) {
-		requiredVal, err := r.l1Client.ReadStorageAt(ctx, r.rollupCfg.ProtocolVersionsAddress, RequiredProtocolVersionStorageSlot, l1Ref.Hash)
+		requiredVal, err := r.l1Client.ReadStorageAt(ctx, r.rollupCfg.ProtocolVersionsAddress, RequiredProtocolVersionStorageSlot, confirmed.Hash)
 		if err != nil {
 			return fmt.Errorf("required-protocol-version value failed to load from L1 contract: %w", err)
 		}
 		requiredProtVersion = params.ProtocolVersion(requiredVal)
-		recommendedVal, err := r.l1Client.ReadStorageAt(ctx, r.rollupCfg.ProtocolVersionsAddress, RecommendedProtocolVersionStorageSlot, l1Ref.Hash)
+		recommendedVal, err := r.l1Client.ReadStorageAt(ctx, r.rollupCfg.ProtocolVersionsAddress, RecommendedProtocolVersionStorageSlot, confirmed.Hash)
 		if err != nil {
 			return fmt.Errorf("recommended-protocol-version value failed to load from L1 contract: %w", err)
 		}
@@ -118,10 +157,23 @@ func (r *RuntimeConfig) Load(ctx context.Context, l1Ref eth.L1BlockRef) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.l1Ref = l1Ref
-	r.p2pBlockSignerAddr = common.BytesToAddress(p2pSignerVal[:])
-	r.required = requiredProtVersion
-	r.recommended = recommendedProtoVersion
-	r.log.Info("loaded new runtime config values!", "p2p_seq_address", r.p2pBlockSignerAddr)
-	return nil
+
+	runCfgData := NewRuntimeConfigData(
+		l1Ref,
+		eth.SystemConfig{
+			UnsafeBlockSigner: common.BytesToAddress(unsafeBlockSigner[:]),
+			// Read other configs if needed.
+		},
+		recommendedProtoVersion,
+		requiredProtVersion,
+	)
+	r.store.Add(runCfgData)
+
+	r.log.Info(
+		"loaded new runtime config values!",
+		"p2p_seq_address", runCfgData.sysCfg.UnsafeBlockSigner,
+		"recommended_protocol_version", recommendedProtoVersion,
+		"required_protocol_version", requiredProtVersion,
+	)
+	return r.pvuListener(ctx, requiredProtVersion, recommendedProtoVersion)
 }
