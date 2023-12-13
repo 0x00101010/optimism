@@ -7,7 +7,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/urfave/cli/v2"
 
-	"github.com/ethereum-optimism/optimism/op-conductor/conductor"
 	"github.com/ethereum-optimism/optimism/op-conductor/flags"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	"github.com/ethereum-optimism/optimism/op-service/cliapp"
@@ -30,7 +29,7 @@ func main() {
 	app.Name = "op-conductor"
 	app.Usage = "Optimism Sequencer Conductor Service"
 	app.Description = "op-conductor help sequencer to run in highly available mode"
-	app.Action = cliapp.LifecycleCmd(conductor.Main())
+	app.Action = cliapp.LifecycleCmd(OpConductorMain)
 	app.Commands = []*cli.Command{
 		// TODO: add doc command
 	}
@@ -40,4 +39,8 @@ func main() {
 	if err != nil {
 		log.Crit("Application failed", "message", err)
 	}
+}
+
+func OpConductorMain(ctx *cli.Context, closeApp context.CancelCauseFunc) (cliapp.Lifecycle, error) {
+	return nil, nil
 }

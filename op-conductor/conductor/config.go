@@ -12,7 +12,7 @@ import (
 	oprpc "github.com/ethereum-optimism/optimism/op-service/rpc"
 )
 
-type CLIConfig struct {
+type Config struct {
 	// ConsensusAddr is the address to listen for consensus connections.
 	ConsensusAddr string
 
@@ -38,7 +38,7 @@ type CLIConfig struct {
 }
 
 // Check validates the CLIConfig.
-func (c *CLIConfig) Check() error {
+func (c *Config) Check() error {
 	if c.ConsensusAddr == "" {
 		return fmt.Errorf("missing consensus address")
 	}
@@ -70,8 +70,8 @@ func (c *CLIConfig) Check() error {
 }
 
 // NewConfig parses the Config from the provided flags or environment variables.
-func NewConfig(ctx *cli.Context) *CLIConfig {
-	return &CLIConfig{
+func NewConfig(ctx *cli.Context) *Config {
+	return &Config{
 		ConsensusAddr:  ctx.String(flags.ConsensusAddr.Name),
 		ConsensusPort:  ctx.Int(flags.ConsensusPort.Name),
 		RaftServerID:   ctx.String(flags.RaftServerID.Name),

@@ -14,7 +14,7 @@ clean:
 	rm bin/op-conductor
 
 test:
-	go test -v ./...
+	gotestsum ./...
 
 .PHONY: \
 	clean \
