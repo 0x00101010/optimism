@@ -79,11 +79,43 @@ func New(ctx context.Context, cfg Config, log log.Logger, version string) (*OpCo
 
 func (oc *OpConductor) init() error {
 	oc.log.Info("Initializing OpConductor", "version", oc.version)
+	if err := oc.initConsensus(); err != nil {
+		return fmt.Errorf("failed to init consensus: %w", err)
+	}
+	if err := oc.initHealthMonitor(); err != nil {
+		return fmt.Errorf("failed to init health monitor: %w", err)
+	}
+	if err := oc.initSequencerControl(); err != nil {
+		return fmt.Errorf("failed to init sequencer control: %w", err)
+	}
+	// TODO: init metrics / rpc / pprof
 
 	return nil
 }
 
 func (oc *OpConductor) initConsensus() error {
+	c, err := consensus.NewRaftConsensus(
+		oc.log,
+		oc.cfg.RaftServerID,
+		oc.cfg.ConsensusAddr,
+		fmt.Sprint(oc.cfg.ConsensusPort),
+		oc.cfg.RaftStorageDIR,
+		oc.cfg.RaftBootstrap,
+		oc.cfg.RollupCfg,
+	)
+	if err != nil {
+		return err
+	}
+
+	oc.consensus = c
+	return nil
+}
+
+func (oc *OpConductor) initHealthMonitor() error {
+	return nil
+}
+
+func (oc *OpConductor) initSequencerControl() error {
 	return nil
 }
 
