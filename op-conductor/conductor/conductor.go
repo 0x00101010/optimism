@@ -37,7 +37,7 @@ type OpConductor struct {
 	log     log.Logger
 	version string
 
-	cfg       Config
+	cfg       *Config
 	consensus consensus.Consensus
 	ctrl      control.SequencerControl
 	hm        health.HealthMonitor
@@ -52,7 +52,7 @@ type OpConductor struct {
 }
 
 // New creates a new OpConductor instance.
-func New(ctx context.Context, cfg Config, log log.Logger, version string) (*OpConductor, error) {
+func New(ctx context.Context, cfg *Config, log log.Logger, version string) (*OpConductor, error) {
 	if err := cfg.Check(); err != nil {
 		return nil, err
 	}
@@ -112,6 +112,7 @@ func (oc *OpConductor) initConsensus() error {
 }
 
 func (oc *OpConductor) initHealthMonitor() error {
+	oc.hm = health.NewSequencerHealthMonitor()
 	return nil
 }
 
@@ -184,20 +185,23 @@ func (oc *OpConductor) Paused() bool {
 }
 
 func (oc *OpConductor) loop() {
+	healthUpdate := oc.hm.Subscribe()
+	leaderUpdate := oc.consensus.LeaderCh()
+
 	for {
 		select {
 		case <-oc.pauseCh:
 			oc.waitForUnpauseOrShutdown()
 		case <-oc.shutdownCtx.Done():
 			return
-		case leader := <-oc.consensus.LeaderCh():
+		case leader := <-leaderUpdate:
 			oc.log.Info(fmt.Sprintf("Leadership changed at %s", oc.consensus.ServerID()), "leader", leader)
 			if leader {
 				oc.handleBecomingLeader()
 			} else {
 				oc.handleSteppingDownAsLeader()
 			}
-		case healthy := <-oc.hm.Subscribe():
+		case healthy := <-healthUpdate:
 			oc.handleHealthUpdate(healthy)
 		}
 	}

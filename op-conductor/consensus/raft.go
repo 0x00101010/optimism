@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -35,6 +36,11 @@ func NewRaftConsensus(log log.Logger, serverID, serverAddr, serverPort, storageD
 	rc.LocalID = raft.ServerID(serverID)
 
 	baseDir := filepath.Join(storageDir, serverID)
+	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(baseDir, 0o755); err != nil {
+			return nil, fmt.Errorf("error creating storage dir: %v", err)
+		}
+	}
 
 	var err error
 	logStorePath := filepath.Join(baseDir, "raft-log.db")
@@ -64,7 +70,8 @@ func NewRaftConsensus(log log.Logger, serverID, serverAddr, serverPort, storageD
 
 	maxConnPool := 10
 	timeout := 5 * time.Second
-	transport, err := raft.NewTCPTransportWithLogger(serverPort, addr, maxConnPool, timeout, rc.Logger)
+	bindAddr := fmt.Sprintf("0.0.0.0:%d", addr.Port)
+	transport, err := raft.NewTCPTransportWithLogger(bindAddr, addr, maxConnPool, timeout, rc.Logger)
 	if err != nil {
 		return nil, err
 	}

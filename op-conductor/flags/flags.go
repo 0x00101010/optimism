@@ -5,6 +5,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ethereum-optimism/optimism/op-node/flags"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
 	opmetrics "github.com/ethereum-optimism/optimism/op-service/metrics"
@@ -30,7 +31,7 @@ var (
 	RaftServerID = &cli.StringFlag{
 		Name:    "raft.server.id",
 		Usage:   "Unique ID for this server used by raft consensus",
-		EnvVars: opservice.PrefixEnvVar(EnvVarPrefix, "SERVER_ID"),
+		EnvVars: opservice.PrefixEnvVar(EnvVarPrefix, "RAFT_SERVER_ID"),
 	}
 	RaftStorageDIR = &cli.StringFlag{
 		Name:    "raft.storage.dir",
@@ -65,6 +66,7 @@ func init() {
 	optionalFlags = append(optionalFlags, oplog.CLIFlags(EnvVarPrefix)...)
 	optionalFlags = append(optionalFlags, opmetrics.CLIFlags(EnvVarPrefix)...)
 	optionalFlags = append(optionalFlags, oppprof.CLIFlags(EnvVarPrefix)...)
+	optionalFlags = append(optionalFlags, flags.RollupConfig)
 
 	Flags = append(requiredFlags, optionalFlags...)
 }

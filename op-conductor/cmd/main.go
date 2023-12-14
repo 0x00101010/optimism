@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/urfave/cli/v2"
 
+	"github.com/ethereum-optimism/optimism/op-conductor/conductor"
 	"github.com/ethereum-optimism/optimism/op-conductor/flags"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	"github.com/ethereum-optimism/optimism/op-service/cliapp"
@@ -42,5 +44,20 @@ func main() {
 }
 
 func OpConductorMain(ctx *cli.Context, closeApp context.CancelCauseFunc) (cliapp.Lifecycle, error) {
-	return nil, nil
+	logCfg := oplog.ReadCLIConfig(ctx)
+	log := oplog.NewLogger(oplog.AppOut(ctx), logCfg)
+	oplog.SetGlobalLogHandler(log.GetHandler())
+	opservice.ValidateEnvVars(flags.EnvVarPrefix, flags.Flags, log)
+
+	cfg, err := conductor.NewConfig(ctx, log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	c, err := conductor.New(ctx.Context, cfg, log, Version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conductor: %w", err)
+	}
+
+	return c, nil
 }
