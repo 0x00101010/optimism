@@ -48,6 +48,21 @@ var (
 		Usage:   "HTTP provider URL for execution layer",
 		EnvVars: opservice.PrefixEnvVar(EnvVarPrefix, "EXECUTION_RPC"),
 	}
+	HealthCheckInterval = &cli.Uint64Flag{
+		Name:    "healthcheck.interval",
+		Usage:   "Interval between health checks",
+		EnvVars: opservice.PrefixEnvVar(EnvVarPrefix, "HEALTHCHECK_INTERVAL"),
+	}
+	HealthCheckSafeInterval = &cli.Uint64Flag{
+		Name:    "healthcheck.safe-interval",
+		Usage:   "Interval between safe head progression measured in seconds",
+		EnvVars: opservice.PrefixEnvVar(EnvVarPrefix, "HEALTHCHECK_SAFE_INTERVAL"),
+	}
+	HealthCheckMinPeerCount = &cli.Uint64Flag{
+		Name:    "healthcheck.min-peer-count",
+		Usage:   "Minimum number of peers required to be considered healthy",
+		EnvVars: opservice.PrefixEnvVar(EnvVarPrefix, "HEALTHCHECK_MIN_PEER_COUNT"),
+	}
 )
 
 var requiredFlags = []cli.Flag{
@@ -57,6 +72,9 @@ var requiredFlags = []cli.Flag{
 	RaftStorageDir,
 	NodeRPC,
 	ExecutionRPC,
+	HealthCheckInterval,
+	HealthCheckSafeInterval,
+	HealthCheckMinPeerCount,
 }
 
 var optionalFlags = []cli.Flag{}
