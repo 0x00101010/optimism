@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hashicorp/go-multierror"
+	"github.com/hashicorp/raft"
 	"github.com/pkg/errors"
 
 	"github.com/ethereum-optimism/optimism/op-conductor/client"
@@ -56,6 +57,7 @@ func NewOpConductor(
 		cons:         cons,
 		hm:           hm,
 	}
+	oc.healthy.Store(true)
 
 	err := oc.init(ctx)
 	if err != nil {
@@ -178,6 +180,7 @@ type OpConductor struct {
 	resumeDoneCh   chan struct{}
 	paused         atomic.Bool
 	stopped        atomic.Bool
+	healthy        atomic.Bool
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 }
@@ -316,6 +319,38 @@ func (oc *OpConductor) handleSteppingDownAsLeader() {
 	// TODO: https://github.com/ethereum-optimism/protocol-quest/issues/47
 }
 
+// For health updates, we need to handle scenarios below:
+// 1. sequencer healthy, do nothing -> happy case
+// 2. sequencer not healthy, we're not leader, log error, but no need to do anything else
+// 3. sequencer not healthy, we're leader, transfer leadership to another sequencer
 func (oc *OpConductor) handleHealthUpdate(healthy bool) {
-	// TODO: https://github.com/ethereum-optimism/protocol-quest/issues/47
+	if healthy {
+		oc.healthy.Store(true)
+		return
+	}
+
+	oc.healthy.Store(false)
+	oc.log.Error("Sequencer is unhealthy", "server", oc.cons.ServerID())
+	// TransferLeader here will do round robin to try to transfer leadership to the next healthy node.
+	if err := oc.cons.TransferLeader(); err != nil {
+		if errors.Is(err, raft.ErrRaftShutdown) {
+			// Raft is shutting down, cannot transfer leader.
+			// At this stage, leadership change is already notified and should be handled by handleSteppingDownAsLeader to stop sequencing.
+			oc.log.Warn("sequencer unhealthy and raft is shutting down, this is expected behavior")
+			return
+		} else if errors.Is(err, raft.ErrLeadershipTransferInProgress) {
+			// Leadership transfer is already in progress, do nothing, this error will only occur when current node is still the leader.
+			oc.log.Warn("sequencer unhealthy and leadership transfer is already in progress, this is expected behavior")
+			return
+		} else if errors.Is(err, raft.ErrNotLeader) {
+			// This node is not the leader, do nothing.
+			oc.log.Warn("sequencer unhealthy, current node is follower")
+			return
+		} else {
+			// For all the other failure scenarios, it meant that we failed to transfer leadership to another node which not
+			// be ideal, it will cause unsafe head stall since current sequencer is not healthy and no other sequencer will become
+			// leader. But this should happen really rarely, and it would be safe to retry leadership transfer for another unhealthy update.
+			oc.log.Error("failed to transfer leadership", "err", err)
+		}
+	}
 }
