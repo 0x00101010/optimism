@@ -53,11 +53,11 @@ func NewOpConductor(
 		pauseDoneCh:  make(chan struct{}),
 		resumeCh:     make(chan struct{}),
 		resumeDoneCh: make(chan struct{}),
+		healthy:      true,
 		ctrl:         ctrl,
 		cons:         cons,
 		hm:           hm,
 	}
-	oc.healthy.Store(true)
 
 	err := oc.init(ctx)
 	if err != nil {
@@ -180,7 +180,7 @@ type OpConductor struct {
 	resumeDoneCh   chan struct{}
 	paused         atomic.Bool
 	stopped        atomic.Bool
-	healthy        atomic.Bool
+	healthy        bool
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 }
@@ -311,8 +311,14 @@ func (oc *OpConductor) waitForResumeOrShutdown() {
 	}
 }
 
+// handleBecomingLeader handles the scenario when current node becomes the leader.
+//  1. if sequencer is healthy, start sequencer.
+//     a. if cannot start sequencer after retry, transfer leadership to another node.
+//  2. if sequencer is not healthy, transfer leadership to another node.
 func (oc *OpConductor) handleBecomingLeader() {
-	// TODO: https://github.com/ethereum-optimism/protocol-quest/issues/47
+	if !oc.healthy {
+		// if sequencer is not healthy, transfer leadership to another node.
+	}
 }
 
 func (oc *OpConductor) handleSteppingDownAsLeader() {
@@ -325,11 +331,11 @@ func (oc *OpConductor) handleSteppingDownAsLeader() {
 // 3. sequencer not healthy, we're leader, transfer leadership to another sequencer
 func (oc *OpConductor) handleHealthUpdate(healthy bool) {
 	if healthy {
-		oc.healthy.Store(true)
+		oc.healthy = true
 		return
 	}
 
-	oc.healthy.Store(false)
+	oc.healthy = false
 	oc.log.Error("Sequencer is unhealthy", "server", oc.cons.ServerID())
 	// TransferLeader here will do round robin to try to transfer leadership to the next healthy node.
 	if err := oc.cons.TransferLeader(); err != nil {
