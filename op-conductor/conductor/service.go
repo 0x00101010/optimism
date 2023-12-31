@@ -22,8 +22,9 @@ import (
 )
 
 var (
-	ErrResumeTimeout = errors.New("timeout to resume conductor")
-	ErrPauseTimeout  = errors.New("timeout to pause conductor")
+	ErrResumeTimeout      = errors.New("timeout to resume conductor")
+	ErrPauseTimeout       = errors.New("timeout to pause conductor")
+	ErrUnsafeHeadMismarch = errors.New("unsafe head mismatch")
 )
 
 // New creates a new OpConductor instance.
@@ -53,11 +54,17 @@ func NewOpConductor(
 		pauseDoneCh:  make(chan struct{}),
 		resumeCh:     make(chan struct{}),
 		resumeDoneCh: make(chan struct{}),
-		healthy:      true,
+		stepCh:       make(chan struct{}, 1),
 		ctrl:         ctrl,
 		cons:         cons,
 		hm:           hm,
 	}
+	// explicitly set all atomic.Bool values
+	oc.leader.Store(false)
+	oc.healthy.Store(false)
+	oc.sequencerActive.Store(false)
+	oc.paused.Store(false)
+	oc.stopped.Store(false)
 
 	err := oc.init(ctx)
 	if err != nil {
@@ -121,6 +128,10 @@ func (c *OpConductor) initConsensus(ctx context.Context) error {
 		return errors.Wrap(err, "failed to create raft consensus")
 	}
 	c.cons = cons
+	// if started in bootstrap mode, this current node will be the leader.
+	if c.cfg.RaftBootstrap {
+		c.leader.Store(true)
+	}
 	return nil
 }
 
@@ -173,14 +184,18 @@ type OpConductor struct {
 	cons consensus.Consensus
 	hm   health.HealthMonitor
 
+	leader          atomic.Bool
+	healthy         atomic.Bool
+	sequencerActive atomic.Bool
+
 	wg             sync.WaitGroup
 	pauseCh        chan struct{}
 	pauseDoneCh    chan struct{}
 	resumeCh       chan struct{}
 	resumeDoneCh   chan struct{}
+	stepCh         chan struct{}
 	paused         atomic.Bool
 	stopped        atomic.Bool
-	healthy        bool
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 }
@@ -279,19 +294,16 @@ func (oc *OpConductor) loop() {
 
 	for {
 		select {
-		case <-oc.pauseCh:
-			oc.waitForResumeOrShutdown()
 		case <-oc.shutdownCtx.Done():
 			return
+		case <-oc.pauseCh:
+			oc.waitForResumeOrShutdown()
 		case leader := <-leaderUpdate:
-			oc.log.Info(fmt.Sprintf("Leadership changed at %s", oc.cons.ServerID()), "leader", leader)
-			if leader {
-				oc.handleBecomingLeader()
-			} else {
-				oc.handleSteppingDownAsLeader()
-			}
+			oc.handleLeaderUpdate(leader)
 		case healthy := <-healthUpdate:
 			oc.handleHealthUpdate(healthy)
+		case <-oc.stepCh:
+			oc.step()
 		}
 	}
 }
@@ -301,62 +313,134 @@ func (oc *OpConductor) waitForResumeOrShutdown() {
 	oc.pauseDoneCh <- struct{}{}
 	for {
 		select {
+		case <-oc.shutdownCtx.Done():
+			return
 		case <-oc.resumeCh:
 			oc.paused.Store(false)
 			oc.resumeDoneCh <- struct{}{}
 			return
-		case <-oc.shutdownCtx.Done():
-			return
 		}
 	}
 }
 
-// handleBecomingLeader handles the scenario when current node becomes the leader.
-//  1. if sequencer is healthy, start sequencer.
-//     a. if cannot start sequencer after retry, transfer leadership to another node.
-//  2. if sequencer is not healthy, transfer leadership to another node.
-func (oc *OpConductor) handleBecomingLeader() {
-	if !oc.healthy {
-		// if sequencer is not healthy, transfer leadership to another node.
-	}
+// handleLeaderUpdate handles leadership update from consensus.
+// whenever leadership changed, we delegate the handling to the control loop step.
+func (oc *OpConductor) handleLeaderUpdate(leader bool) {
+	oc.log.Info(fmt.Sprintf("Leadership status changed at %s", oc.cons.ServerID()), "leader", leader)
+	oc.leader.Store(leader)
+	oc.stepCh <- struct{}{}
 }
 
-func (oc *OpConductor) handleSteppingDownAsLeader() {
-	// TODO: https://github.com/ethereum-optimism/protocol-quest/issues/47
-}
-
-// For health updates, we need to handle scenarios below:
-// 1. sequencer healthy, do nothing -> happy case
-// 2. sequencer not healthy, we're not leader, log error, but no need to do anything else
-// 3. sequencer not healthy, we're leader, transfer leadership to another sequencer
+// handleHealthUpdate handles health update from health monitor.
+// whenever health status changed, we delegate the handling to the control loop step.
 func (oc *OpConductor) handleHealthUpdate(healthy bool) {
-	if healthy {
-		oc.healthy = true
-		return
+	if !healthy {
+		oc.log.Error("Sequencer is unhealthy", "server", oc.cons.ServerID())
 	}
 
-	oc.healthy = false
-	oc.log.Error("Sequencer is unhealthy", "server", oc.cons.ServerID())
-	// TransferLeader here will do round robin to try to transfer leadership to the next healthy node.
-	if err := oc.cons.TransferLeader(); err != nil {
-		if errors.Is(err, raft.ErrRaftShutdown) {
-			// Raft is shutting down, cannot transfer leader.
-			// At this stage, leadership change is already notified and should be handled by handleSteppingDownAsLeader to stop sequencing.
-			oc.log.Warn("sequencer unhealthy and raft is shutting down, this is expected behavior")
-			return
-		} else if errors.Is(err, raft.ErrLeadershipTransferInProgress) {
-			// Leadership transfer is already in progress, do nothing, this error will only occur when current node is still the leader.
-			oc.log.Warn("sequencer unhealthy and leadership transfer is already in progress, this is expected behavior")
-			return
-		} else if errors.Is(err, raft.ErrNotLeader) {
-			// This node is not the leader, do nothing.
-			oc.log.Warn("sequencer unhealthy, current node is follower")
-			return
-		} else {
-			// For all the other failure scenarios, it meant that we failed to transfer leadership to another node which not
-			// be ideal, it will cause unsafe head stall since current sequencer is not healthy and no other sequencer will become
-			// leader. But this should happen really rarely, and it would be safe to retry leadership transfer for another unhealthy update.
-			oc.log.Error("failed to transfer leadership", "err", err)
-		}
+	if healthy != oc.healthy.Load() {
+		oc.healthy.Store(healthy)
+		// health status changed, queue a step to handle it.
+		oc.stepCh <- struct{}{}
 	}
+}
+
+// transferLeader tries to transfer leadership to another server.
+func (oc *OpConductor) transferLeader() error {
+	// TransferLeader here will do round robin to try to transfer leadership to the next healthy node.
+	err := oc.cons.TransferLeader()
+	if err == nil {
+		oc.leader.Store(false)
+		return nil // success
+	}
+
+	switch {
+	case errors.Is(err, raft.ErrLeadershipTransferInProgress):
+		// Leadership transfer is already in progress, do nothing, this error will only occur when current node is still the leader.
+		oc.log.Warn("leadership transfer is already in progress")
+		return nil
+	case errors.Is(err, raft.ErrNotLeader):
+		// This node is not the leader, do nothing.
+		oc.log.Warn("cannot transfer leadership since current server is not the leader")
+		return nil
+	default:
+		oc.log.Error("failed to transfer leadership", "err", err)
+		return err
+	}
+}
+
+// step tries to bring the sequencer to the desired state, a retry will be queued if any step failed.
+func (oc *OpConductor) step() {
+	var err error
+	// exhaust all cases below for completeness, 3 state, 8 cases.
+	switch status := struct{ leader, healthy, active bool }{oc.cons.Leader(), oc.healthy.Load(), oc.sequencerActive.Load()}; {
+	case !status.leader && !status.healthy && !status.active:
+		// normal case, although not healthy, log it
+		oc.log.Error("server (follower) is not healthy", "server", oc.cons.ServerID())
+	case !status.leader && !status.healthy && status.active:
+		// stop sequencer
+		err = oc.stopSequencer()
+	case !status.leader && status.healthy && !status.active:
+		// normal follower, do nothing
+	case !status.leader && status.healthy && status.active:
+		// stop sequencer, this happens when current server steps down as leader.
+		err = oc.stopSequencer()
+	case status.leader && !status.healthy && !status.active:
+		// transfer leadership to another node
+		err = oc.transferLeader()
+	case status.leader && !status.healthy && status.active:
+		// stop sequencer, transfer leadership to another node
+		if err = oc.stopSequencer(); err != nil {
+			break
+		}
+		err = oc.transferLeader()
+	case status.leader && status.healthy && !status.active:
+		// start sequencer
+		err = oc.startSequencer()
+	case status.leader && status.healthy && status.active:
+		// normal leader, do nothing
+	}
+
+	if err != nil {
+		oc.log.Error("failed to execute step, queueing another one to retry", "err", err)
+		oc.stepCh <- struct{}{}
+	}
+}
+
+func (oc *OpConductor) stopSequencer() error {
+	oc.log.Info("stopping sequencer", "server", oc.cons.ServerID(), "leader", oc.cons.Leader(), "healthy", oc.healthy.Load(), "active", oc.sequencerActive.Load())
+
+	if _, err := oc.ctrl.StopSequencer(oc.shutdownCtx); err != nil {
+		return err
+	}
+	oc.sequencerActive.Store(false)
+	return nil
+}
+
+func (oc *OpConductor) startSequencer() error {
+	oc.log.Info("starting sequencer", "server", oc.cons.ServerID(), "leader", oc.cons.Leader(), "healthy", oc.healthy.Load(), "active", oc.sequencerActive.Load())
+
+	// When starting sequencer, we need to make sure that the current node has the latest unsafe head from the consensus protocol
+	// If not, then we wait for the unsafe head to catch up or gossip it to op-node manually from op-conductor.
+	unsafeInCons := oc.cons.LatestUnsafePayload()
+	unsafeInNode, err := oc.ctrl.LatestUnsafeBlock(oc.shutdownCtx)
+	if err != nil {
+		return errors.Wrap(err, "failed to get latest unsafe block from EL during startSequencer phase")
+	}
+
+	if unsafeInCons.BlockHash != unsafeInNode.Hash() {
+		oc.log.Warn(
+			"latest unsafe block in consensus is not the same as the one in node",
+			"consensus_hash", unsafeInCons.BlockHash,
+			"consensus_block_num", unsafeInCons.BlockNumber,
+			"node_hash", unsafeInNode.Hash(),
+			"node_block_num", unsafeInNode.NumberU64(),
+		)
+
+		// tries to gossip the unsafe head to op-node
+
+		return ErrUnsafeHeadMismarch // return error to allow retry
+	}
+
+	return oc.ctrl.StartSequencer(oc.shutdownCtx, unsafeInCons.BlockHash)
 }
