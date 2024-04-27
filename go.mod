@@ -254,6 +254,8 @@ require (
 
 replace github.com/ethereum/go-ethereum v1.13.11 => github.com/ethereum-optimism/op-geth v1.101311.1-rc.1
 
+replace github.com/hashicorp/raft v1.6.1 => github.com/0x00101010/raft v0.0.1
+
 //replace github.com/ethereum/go-ethereum v1.13.9 => ../op-geth
 
 // replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain
