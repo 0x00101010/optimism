@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 
@@ -34,6 +35,8 @@ type Oracle interface {
 	BlockByHash(blockHash common.Hash) *types.Block
 
 	OutputByRoot(root common.Hash) eth.Output
+
+	ExecutionWitness(blockHash common.Hash) *stateless.Witness
 }
 
 // PreimageOracle implements Oracle using by interfacing with the pure preimage.Oracle
@@ -101,4 +104,14 @@ func (p *PreimageOracle) OutputByRoot(l2OutputRoot common.Hash) eth.Output {
 		panic(fmt.Errorf("invalid L2 output data for root %s: %w", l2OutputRoot, err))
 	}
 	return output
+}
+
+func (p *PreimageOracle) ExecutionWitness(blockHash common.Hash) *stateless.Witness {
+	p.hint.Hint(ExecutionWitnessHint(blockHash))
+	data := p.oracle.Get(preimage.ExecutionWitnessKey(blockHash))
+	witness, err := stateless.UnmarshalWitness(data)
+	if err != nil {
+		return nil
+	}
+	return witness
 }

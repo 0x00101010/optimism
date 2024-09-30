@@ -7,11 +7,12 @@ import (
 )
 
 const (
-	HintL2BlockHeader  = "l2-block-header"
-	HintL2Transactions = "l2-transactions"
-	HintL2Code         = "l2-code"
-	HintL2StateNode    = "l2-state-node"
-	HintL2Output       = "l2-output"
+	HintL2BlockHeader      = "l2-block-header"
+	HintL2Transactions     = "l2-transactions"
+	HintL2Code             = "l2-code"
+	HintL2StateNode        = "l2-state-node"
+	HintL2Output           = "l2-output"
+	HintL2ExecutionWitness = "l2-execution-witness"
 )
 
 type BlockHeaderHint common.Hash
@@ -52,4 +53,12 @@ var _ preimage.Hint = L2OutputHint{}
 
 func (l L2OutputHint) Hint() string {
 	return HintL2Output + " " + (common.Hash)(l).String()
+}
+
+type ExecutionWitnessHint common.Hash
+
+var _ preimage.Hint = ExecutionWitnessHint{}
+
+func (l ExecutionWitnessHint) Hint() string {
+	return HintL2ExecutionWitness + " " + (common.Hash)(l).String()
 }

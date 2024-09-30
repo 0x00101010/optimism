@@ -42,6 +42,8 @@ const (
 	BlobKeyType KeyType = 5
 	// PrecompileKeyType is for precompile result pre-images.
 	PrecompileKeyType KeyType = 6
+	// ExecutionWitnessKeyType is for execution witness pre-images.
+	ExecutionWitnessKeyType KeyType = 7
 )
 
 // LocalIndexKey is a key local to the program, indexing a special program input.
@@ -118,6 +120,23 @@ func (k PrecompileKey) String() string {
 }
 
 func (k PrecompileKey) TerminalString() string {
+	return "0x" + hex.EncodeToString(k[:])
+}
+
+// ExecutionWitnessKey wraps a keccak256 hash to use it as a typed pre-image key.
+type ExecutionWitnessKey [32]byte
+
+func (k ExecutionWitnessKey) PreimageKey() (out [32]byte) {
+	out = k                                // copy the hash
+	out[0] = byte(ExecutionWitnessKeyType) // apply prefix
+	return
+}
+
+func (k ExecutionWitnessKey) String() string {
+	return "0x" + hex.EncodeToString(k[:])
+}
+
+func (k ExecutionWitnessKey) TerminalString() string {
 	return "0x" + hex.EncodeToString(k[:])
 }
 

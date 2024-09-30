@@ -283,6 +283,8 @@ func (p *Prefetcher) prefetch(ctx context.Context, hint string) error {
 			return fmt.Errorf("failed to fetch L2 output root %s: %w", hash, err)
 		}
 		return p.kvStore.Put(preimage.Keccak256Key(hash).PreimageKey(), output.Marshal())
+	case l2.HintL2ExecutionWitness:
+		// TODO: Implement
 	}
 	return fmt.Errorf("unknown hint type: %v", hintType)
 }
