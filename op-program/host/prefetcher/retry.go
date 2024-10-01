@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/retry"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -139,6 +140,26 @@ func (s *RetryingL2Source) OutputByRoot(ctx context.Context, root common.Hash) (
 			return o, err
 		}
 		return o, nil
+	})
+}
+
+func (s *RetryingL2Source) GetProof(ctx context.Context, address common.Address, storage []common.Hash, blockTag string) (*eth.AccountResult, error) {
+	return retry.Do(ctx, maxAttempts, s.strategy, func() (*eth.AccountResult, error) {
+		r, err := s.source.GetProof(ctx, address, storage, blockTag)
+		if err != nil {
+			s.logger.Warn("Failed to fetch proof", "address", address, "storage", storage, "blockTag", blockTag, "err", err)
+		}
+		return r, err
+	})
+}
+
+func (s *RetryingL2Source) ExecutionWitness(ctx context.Context, blockHash common.Hash) (*stateless.Witness, error) {
+	return retry.Do(ctx, maxAttempts, s.strategy, func() (*stateless.Witness, error) {
+		w, err := s.source.ExecutionWitness(ctx, blockHash)
+		if err != nil {
+			s.logger.Warn("Failed to fetch execution witness", "blockHash", blockHash, "err", err)
+		}
+		return w, err
 	})
 }
 

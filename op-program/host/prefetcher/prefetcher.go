@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -50,6 +51,10 @@ type L2Source interface {
 	NodeByHash(ctx context.Context, hash common.Hash) ([]byte, error)
 	CodeByHash(ctx context.Context, hash common.Hash) ([]byte, error)
 	OutputByRoot(ctx context.Context, root common.Hash) (eth.Output, error)
+	// GetProof returns an account proof result, with any optional requested storage proofs.
+	GetProof(ctx context.Context, address common.Address, storage []common.Hash, blockTag string) (*eth.AccountResult, error)
+	// ExecutionWitness returns the execution witness for the given block hash.
+	ExecutionWitness(ctx context.Context, blockHash common.Hash) (*stateless.Witness, error)
 }
 
 type Prefetcher struct {
