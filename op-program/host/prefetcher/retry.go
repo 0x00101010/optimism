@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/retry"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient/gethclient"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -139,6 +140,16 @@ func (s *RetryingL2Source) OutputByRoot(ctx context.Context, root common.Hash) (
 			return o, err
 		}
 		return o, nil
+	})
+}
+
+func (s *RetryingL2Source) AccountProof(ctx context.Context, blockNumber uint64, address common.Address) (gethclient.AccountResult, error) {
+	return retry.Do(ctx, maxAttempts, s.strategy, func() (gethclient.AccountResult, error) {
+		r, err := s.source.AccountProof(ctx, blockNumber, address)
+		if err != nil {
+			s.logger.Warn("Failed to fetch account proof", "block", blockNumber, "address", address, "err", err)
+		}
+		return r, err
 	})
 }
 

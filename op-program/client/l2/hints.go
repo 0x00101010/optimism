@@ -2,6 +2,7 @@ package l2
 
 import (
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	preimage "github.com/ethereum-optimism/optimism/op-preimage"
 )
@@ -12,6 +13,7 @@ const (
 	HintL2Code         = "l2-code"
 	HintL2StateNode    = "l2-state-node"
 	HintL2Output       = "l2-output"
+	HintL2AccountProof = "l2-account-proof"
 )
 
 type BlockHeaderHint common.Hash
@@ -52,4 +54,12 @@ var _ preimage.Hint = L2OutputHint{}
 
 func (l L2OutputHint) Hint() string {
 	return HintL2Output + " " + (common.Hash)(l).String()
+}
+
+type L2AccountProofHint []byte
+
+var _ preimage.Hint = L2AccountProofHint{}
+
+func (l L2AccountProofHint) Hint() string {
+	return HintL2AccountProof + " " + hexutil.Encode(l)
 }

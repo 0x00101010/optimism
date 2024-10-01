@@ -1,6 +1,7 @@
 package l2
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -34,6 +35,8 @@ type Oracle interface {
 	BlockByHash(blockHash common.Hash) *types.Block
 
 	OutputByRoot(root common.Hash) eth.Output
+
+	AccountProof(blockNumber uint64, address common.Address)
 }
 
 // PreimageOracle implements Oracle using by interfacing with the pure preimage.Oracle
@@ -101,4 +104,13 @@ func (p *PreimageOracle) OutputByRoot(l2OutputRoot common.Hash) eth.Output {
 		panic(fmt.Errorf("invalid L2 output data for root %s: %w", l2OutputRoot, err))
 	}
 	return output
+}
+
+// AccountProof implements Oracle.
+// No need to return results here, as this just populates the oracle with the account proof, and relevant data will be retrieved by other methods.
+func (p *PreimageOracle) AccountProof(blockNumber uint64, address common.Address) {
+	bytes := make([]byte, 28) // uint64 + address
+	binary.BigEndian.PutUint64(bytes, blockNumber)
+	copy(bytes[8:], address.Bytes())
+	p.hint.Hint(L2AccountProofHint(bytes))
 }

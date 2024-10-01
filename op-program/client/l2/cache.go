@@ -21,6 +21,8 @@ type CachingOracle struct {
 	outputs *simplelru.LRU[common.Hash, eth.Output]
 }
 
+var _ Oracle = (*CachingOracle)(nil)
+
 func NewCachingOracle(oracle Oracle) *CachingOracle {
 	blockLRU, _ := simplelru.NewLRU[common.Hash, *types.Block](blockCacheSize, nil)
 	nodeLRU, _ := simplelru.NewLRU[common.Hash, []byte](nodeCacheSize, nil)
@@ -73,4 +75,8 @@ func (o *CachingOracle) OutputByRoot(root common.Hash) eth.Output {
 	output = o.oracle.OutputByRoot(root)
 	o.outputs.Add(root, output)
 	return output
+}
+
+func (o *CachingOracle) AccountProof(blockNumber uint64, address common.Address) {
+	o.oracle.AccountProof(blockNumber, address)
 }

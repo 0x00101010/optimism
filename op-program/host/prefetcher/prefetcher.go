@@ -19,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient/gethclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -50,6 +51,7 @@ type L2Source interface {
 	NodeByHash(ctx context.Context, hash common.Hash) ([]byte, error)
 	CodeByHash(ctx context.Context, hash common.Hash) ([]byte, error)
 	OutputByRoot(ctx context.Context, root common.Hash) (eth.Output, error)
+	AccountProof(ctx context.Context, blockNumber uint64, address common.Address) (gethclient.AccountResult, error)
 }
 
 type Prefetcher struct {
@@ -283,6 +285,14 @@ func (p *Prefetcher) prefetch(ctx context.Context, hint string) error {
 			return fmt.Errorf("failed to fetch L2 output root %s: %w", hash, err)
 		}
 		return p.kvStore.Put(preimage.Keccak256Key(hash).PreimageKey(), output.Marshal())
+	case l2.HintL2AccountProof:
+		if len(hintBytes) != 8+20 {
+			return fmt.Errorf("invalid L2 account proof hint: %x", hint)
+		}
+		blockNumber := binary.BigEndian.Uint64(hintBytes[:8])
+		address := common.BytesToAddress(hintBytes[8:])
+		// p.l2Fetcher.
+		// TODO: implement
 	}
 	return fmt.Errorf("unknown hint type: %v", hintType)
 }
