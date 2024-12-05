@@ -110,6 +110,7 @@ func (s *OpConductorTestSuite) SetupSuite() {
 }
 
 func (s *OpConductorTestSuite) SetupTest() {
+	s.log.Info("setup test", "test", s.T().Name())
 	// initialize for every test so that method call count starts from 0
 	s.ctrl = &clientmocks.SequencerControl{}
 	s.cons = &consensusmocks.Consensus{}
@@ -133,6 +134,7 @@ func (s *OpConductorTestSuite) SetupTest() {
 }
 
 func (s *OpConductorTestSuite) TearDownTest() {
+	s.log.Info("teardown test", "test", s.T().Name())
 	s.hmon.EXPECT().Stop().Return(nil)
 	s.cons.EXPECT().Shutdown().Return(nil)
 
@@ -155,9 +157,13 @@ func (s *OpConductorTestSuite) startConductor() {
 func (s *OpConductorTestSuite) enableSynchronization() {
 	s.syncEnabled = true
 	s.conductor.loopActionFn = func() {
+		s.log.Info("entering loop action fn ...")
 		<-s.next
+		s.log.Info("passed next step ...")
 		s.conductor.loopAction()
+		s.log.Info("passed loop action ...")
 		s.wg.Done()
+		s.log.Info("passed done ...")
 	}
 	s.startConductor()
 	s.executeAction()
@@ -173,7 +179,9 @@ func (s *OpConductorTestSuite) execute(fn func()) {
 	if fn != nil {
 		fn()
 	}
+	s.log.Info("before executing next")
 	s.next <- struct{}{}
+	s.log.Info("after executing next")
 	s.wg.Wait()
 }
 
