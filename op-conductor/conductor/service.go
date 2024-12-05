@@ -568,7 +568,7 @@ func (oc *OpConductor) loop() {
 			return
 		default:
 			oc.loopActionFn()
-			oc.log.Info("loop action fn executed.")
+			oc.log.Info("loop action fn executed..")
 		}
 		oc.metrics.RecordLoopExecutionTime(time.Since(startTime).Seconds())
 	}
