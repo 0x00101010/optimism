@@ -568,6 +568,7 @@ func (oc *OpConductor) loop() {
 			return
 		default:
 			oc.loopActionFn()
+			oc.log.Info("loop action fn executed")
 		}
 		oc.metrics.RecordLoopExecutionTime(time.Since(startTime).Seconds())
 	}
@@ -590,6 +591,7 @@ func (oc *OpConductor) loopAction() {
 	case <-oc.shutdownCtx.Done():
 		return
 	case <-oc.actionCh:
+		oc.log.Info("consumed action")
 		oc.action()
 	}
 }
@@ -597,9 +599,11 @@ func (oc *OpConductor) loopAction() {
 func (oc *OpConductor) queueAction() {
 	select {
 	case oc.actionCh <- struct{}{}:
+		oc.log.Info("queued action")
 	default:
 		// do nothing if there's an action queued already, this is fine because whenever an action is executed,
 		// it is guaranteed to have the latest status and bring the sequencer to the desired state.
+		oc.log.Info("action already queued")
 	}
 }
 
