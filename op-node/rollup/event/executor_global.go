@@ -89,6 +89,7 @@ func (gs *GlobalSyncExec) Drain() error {
 			return gs.ctx.Err()
 		}
 		ev := gs.pop()
+		fmt.Println(ev.Event)
 		if ev.Event == nil {
 			return nil
 		}
@@ -131,6 +132,7 @@ func (gs *GlobalSyncExec) DrainUntil(fn func(ev Event) bool, excl bool) error {
 		}
 		// includes popping of the event, so we can handle Drain() calls by onEvent() execution
 		ev, stopIncl, stopExcl := iter()
+		fmt.Println(ev.Event)
 		if stopExcl {
 			return nil
 		}

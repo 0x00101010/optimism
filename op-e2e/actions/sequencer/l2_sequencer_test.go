@@ -1,21 +1,22 @@
 package sequencer
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 
-	"github.com/ethereum-optimism/optimism/op-e2e/config"
-
-	"github.com/ethereum-optimism/optimism/op-e2e/actions/helpers"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
-
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ethereum-optimism/optimism/op-e2e/actions/helpers"
+	"github.com/ethereum-optimism/optimism/op-e2e/config"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils"
+	"github.com/ethereum-optimism/optimism/op-node/rollup/event"
+	"github.com/ethereum-optimism/optimism/op-node/rollup/sequencing"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 func TestL2Sequencer_SequencerDrift(gt *testing.T) {
@@ -88,6 +89,35 @@ func TestL2Sequencer_SequencerDrift(gt *testing.T) {
 	sequencer.ActL2KeepL1Origin(t)
 	sequencer.ActL2StartBlock(t)
 	require.True(t, engine.EngineApi.ForcedEmpty(), "engine should not be allowed to include anything after sequencer drift is surpassed")
+}
+
+func TestL2Sequencer_NewPayloadTimeout(gt *testing.T) {
+	t := helpers.NewDefaultTesting(gt)
+	dp := e2eutils.MakeDeployParams(t, helpers.DefaultRollupTestParams())
+	sd := e2eutils.Setup(t, dp, helpers.DefaultAlloc)
+	log := testlog.Logger(t, log.LevelDebug)
+	_, engine, sequencer := helpers.SetupSequencerTest(t, sd, log)
+
+	// Sequencer at first only recognizes the genesis as safe.
+	// The rest of the L1 chain will be incorporated as L1 origins into unsafe L2 blocks.
+	sequencer.ActL2PipelineFull(t)
+
+	// First start block building
+	sequencer.ActL2StartBlock(t)
+	// mock new payload timeout
+	sequencer.ActEvent(sequencing.SequencerActionEvent{})
+	sequencer.DrainUntil(t, event.Is[engine.PayloadProcessEvent], true)
+
+	fmt.Println("test actEvent")
+	sequencer.ActEvent(sequencing.SequencerActionEvent{})
+	fmt.Println("test drain")
+	sequencer.Drain(t)
+	// fmt.Println("test drain until")
+	// sequencer.DrainUntil(t, event.Is[engine.PayloadProcessEvent], false)
+	// fmt.Println("test drain")
+	// sequencer.Drain(t)
+
+	// engine.ActL2RPCFail(t, )
 }
 
 // TestL2Sequencer_SequencerOnlyReorg regression-tests a Goerli halt where the sequencer

@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
@@ -102,6 +103,7 @@ func (s *L2Sequencer) ActL2StartBlock(t Testing) {
 		t.InvalidAction("already started building L2 block")
 		return
 	}
+	fmt.Println("entered act l2 start block")
 	s.synchronousEvents.Emit(sequencing.SequencerActionEvent{})
 	require.NoError(t, s.drainer.DrainUntil(event.Is[engine.BuildStartedEvent], false),
 		"failed to start block building")
@@ -232,4 +234,24 @@ func (s *L2Sequencer) ActBuildL2ToHolocene(t Testing) {
 	for s.L2Unsafe().Time < *s.RollupCfg.HoloceneTime {
 		s.ActL2EmptyBlock(t)
 	}
+}
+
+// ActEvent acts on a single event and drains until target event is processed.
+// This should be used for rare cases where other Act methods are not sufficient.
+// For example, to test a specific event that is not part of the normal sequence.
+//
+// Be careful when using this as this does not do pipeline idle / block building checks.
+// Use Drain to help execute remaining events if necessary.
+func (s *L2Sequencer) ActEvent(ev event.Event) {
+	s.synchronousEvents.Emit(ev)
+}
+
+// Note: only use along with ActEvent
+func (s *L2Sequencer) DrainUntil(t Testing, fn func(ev event.Event) bool, excl bool) {
+	require.NoError(t, s.drainer.DrainUntil(fn, excl))
+}
+
+// Note: only use along with ActEvent
+func (s *L2Sequencer) Drain(t Testing) {
+	require.NoError(t, s.drainer.Drain())
 }
